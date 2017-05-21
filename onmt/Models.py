@@ -83,8 +83,11 @@ class Decoder(nn.Module):
                                   padding_idx=onmt.Constants.PAD)
         self.rnn = StackedLSTM(opt.layers, input_size, opt.rnn_size, opt.dropout)
         self.attn = onmt.modules.GlobalAttention(opt.rnn_size)
+        if self.input_feed:
+            self.copy = onmt.modules.Copy(opt.rnn_size, opt.word_vec_size + opt.rnn_size, opt.layers)
+        else:
+            self.copy = onmt.modules.Copy(opt.rnn_size, opt.word_vec_size, opt.layers)
         self.dropout = nn.Dropout(opt.dropout)
-
         self.hidden_size = opt.rnn_size
 
     def load_pretrained_vectors(self, opt):
@@ -99,6 +102,7 @@ class Decoder(nn.Module):
         # iterations in parallel, but that's only possible if
         # self.input_feed=False
         outputs = []
+        p_gens = []
         output = init_output
         for emb_t in emb.split(1):
             emb_t = emb_t.squeeze(0)
@@ -107,11 +111,14 @@ class Decoder(nn.Module):
 
             output, hidden = self.rnn(emb_t, hidden)
             output, attn = self.attn(output, context.t())
+            p_gen = self.copy(attn, emb_t, hidden, context.t())
             output = self.dropout(output)
             outputs += [output]
+            p_gens += [p_gen]
 
         outputs = torch.stack(outputs)
-        return outputs, hidden, attn
+        p_gens = torch.stack(p_gens)
+        return outputs, hidden, attn, p_gens
 
 
 class NMTModel(nn.Module):
@@ -145,6 +152,6 @@ class NMTModel(nn.Module):
         enc_hidden = (self._fix_enc_hidden(enc_hidden[0]),
                       self._fix_enc_hidden(enc_hidden[1]))
 
-        out, dec_hidden, _attn = self.decoder(tgt, enc_hidden, context, init_output)
+        out, dec_hidden, _attn, _p_gens = self.decoder(tgt, enc_hidden, context, init_output)
 
         return out
