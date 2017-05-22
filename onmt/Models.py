@@ -103,6 +103,7 @@ class Decoder(nn.Module):
         # self.input_feed=False
         outputs = []
         p_gens = []
+        attns = []
         output = init_output
         for emb_t in emb.split(1):
             emb_t = emb_t.squeeze(0)
@@ -115,10 +116,12 @@ class Decoder(nn.Module):
             output = self.dropout(output)
             outputs += [output]
             p_gens += [p_gen]
+            attns += [attn]
 
         outputs = torch.stack(outputs)
         p_gens = torch.stack(p_gens)
-        return outputs, hidden, attn, p_gens
+        attns = torch.stack(attns)
+        return outputs, hidden, attns, p_gens
 
 
 class NMTModel(nn.Module):
@@ -154,4 +157,4 @@ class NMTModel(nn.Module):
 
         out, dec_hidden, _attn, _p_gens = self.decoder(tgt, enc_hidden, context, init_output)
 
-        return out
+        return out, _attn, _p_gens

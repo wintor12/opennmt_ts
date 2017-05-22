@@ -1,5 +1,6 @@
 from __future__ import division
 import onmt
+import onmt.modules
 import argparse
 import torch
 import torch.nn as nn
@@ -147,17 +148,22 @@ print(' * maximum batch size. %d' % opt.batch_size)
 encoder = onmt.Models.Encoder(opt,dicts['src'])
 decoder = onmt.Models.Decoder(opt, dicts['tgt'])
 
-generator = nn.Sequential(
+vocab_dist_gen = nn.Sequential(
         nn.Linear(opt.rnn_size, dicts['tgt'].size()),
-        nn.LogSoftmax())
+        nn.Softmax())
+final_dist_gen = onmt.modules.DistGen()
 
 model = onmt.Models.NMTModel(encoder, decoder)
 
 if len(opt.gpus) >= 1:
     model.cuda()
-    generator.cuda()
+    vocab_dist_gen.cuda()
+    final_dist_gen.cuda()
 
-model.generator = generator
+
+model.vocab_dist_gen = vocab_dist_gen
+model.final_dist_gen = final_dist_gen
+
 
 if not opt.train_from_state_dict and not opt.train_from:
     for p in model.parameters():
@@ -174,9 +180,67 @@ optim.set_parameters(model.parameters())
 nParams = sum([p.nelement() for p in model.parameters()])
 print('* number of parameters: %d' % nParams)
 
+#trainModel(model, trainData, validData, dataset, optim)
+criterion = NMTCriterion(dataset['dicts']['tgt'].size())
+
+# shuffle mini batch order
+#batchOrder = torch.randperm(len(trainData))
+total_loss, total_words, total_num_correct = 0, 0, 0
+report_loss, report_tgt_words, report_src_words, report_num_correct = 0, 0, 0, 0
+batchIdx = 1500
+batch = trainData[batchIdx][:-1] # exclude original indices
+print('src', batch[0][0].size())
+print('tgt', batch[1].size())
+#('src', (35L, 64L))
+#('tgt', (48L, 64L))
+model.zero_grad()
+outputs, attns, p_gens = model(batch)
+print('outputs', outputs.size())
+#('outputs', (47L, 64L, 100L))  47 is the max length of target sequences in current batch
+print('attns', attns.size())
+print('p_gens', p_gens.size())
+#('attns', (47L, 64L, 35L))
+#('p_gens', (47L, 64L, 1L))
+print(outputs.requires_grad, outputs.volatile)
+#(True, False)
+targets = batch[1][1:]  # exclude <s> from targets
+#loss, gradOutput, num_correct = memoryEfficientLoss(
+#    outputs, targets, model.generator, criterion)
+
 print(model)
-trainModel(model, trainData, validData, dataset, optim)
+num_correct, loss = 0, 0
+batch_size = outputs.size(1)
+outputs_split = torch.split(outputs, opt.max_generator_batches)
+targets_split = torch.split(targets, opt.max_generator_batches)
+attns_split = torch.split(attns, opt.max_generator_batches)
+p_gens_split = torch.split(p_gens, opt.max_generator_batches)
+print('ouputs_split', len(outputs_split), outputs_split[0].size(), outputs_split[1].size())
+#('ouputs_split', 2, (32L, 64L, 100L), (15L, 64L, 100L))
+print('targets_split', len(targets_split), targets_split[0].size(), targets_split[1].size())
+#('targets_split', 2, (32L, 64L), (15L, 64L))
 
+crit = criterion
+for i, (out_t, targ_t, attn_t, p_gen_t) in enumerate(zip(outputs_split, targets_split, attns_split, p_gens_split)):
+    decoder_hidden = out_t.size(2)
+    decoder_batch_len = out_t.size(0)
+    out_t = out_t.view(-1, decoder_hidden)
+    #attn_t = attn_t.view(-1, attn_t.size(2))
+    #p_gen_t = p_gen_t.view(-1, p_gen_t.size(2))
+    print(out_t.size(), attn_t.size(), p_gen_t.size())
+    #1 (2048L, 100L)(2048L, 26L)(2048L, 1L)
+    #2 (960L, 100L)(960L, 26L)(960L, 1L)
+    scores_t = vocab_dist_gen(out_t)
+    print(scores_t.size())
+    #1 (2048L, 50003L)
+    #2 (960L, 50003L)
+    final_scores_t = final_dist_gen(scores_t.view(decoder_batch_len, batch_size, dicts['tgt'].size()), attn_t, p_gen_t)
+    loss_t = crit(scores_t, targ_t.view(-1))
+    pred_t = scores_t.max(1)[1]
+    num_correct_t = pred_t.data.eq(targ_t.data).masked_select(targ_t.ne(onmt.Constants.PAD).data).sum()
+    num_correct += num_correct_t
+    loss += loss_t.data[0]
+    if not eval:
+        loss_t.div(batch_size).backward()
 
-
+#outputs.backward(gradOutput)
 
