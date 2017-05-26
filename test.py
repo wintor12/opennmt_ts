@@ -204,6 +204,7 @@ print('p_gens', p_gens.size())
 print(outputs.requires_grad, outputs.volatile)
 #(True, False)
 targets = batch[1][1:]  # exclude <s> from targets
+sources = batch[0][0]
 #loss, gradOutput, num_correct = memoryEfficientLoss(
 #    outputs, targets, model.generator, criterion)
 
@@ -218,14 +219,15 @@ print('ouputs_split', len(outputs_split), outputs_split[0].size(), outputs_split
 #('ouputs_split', 2, (32L, 64L, 100L), (15L, 64L, 100L))
 print('targets_split', len(targets_split), targets_split[0].size(), targets_split[1].size())
 #('targets_split', 2, (32L, 64L), (15L, 64L))
+print('source size', sources.size())
 
 crit = criterion
 for i, (out_t, targ_t, attn_t, p_gen_t) in enumerate(zip(outputs_split, targets_split, attns_split, p_gens_split)):
     decoder_hidden = out_t.size(2)
     decoder_batch_len = out_t.size(0)
     out_t = out_t.view(-1, decoder_hidden)
-    #attn_t = attn_t.view(-1, attn_t.size(2))
-    #p_gen_t = p_gen_t.view(-1, p_gen_t.size(2))
+    attn_t = attn_t.view(-1, attn_t.size(2))
+    p_gen_t = p_gen_t.view(-1, p_gen_t.size(2))
     print(out_t.size(), attn_t.size(), p_gen_t.size())
     #1 (2048L, 100L)(2048L, 26L)(2048L, 1L)
     #2 (960L, 100L)(960L, 26L)(960L, 1L)
@@ -233,7 +235,7 @@ for i, (out_t, targ_t, attn_t, p_gen_t) in enumerate(zip(outputs_split, targets_
     print(scores_t.size())
     #1 (2048L, 50003L)
     #2 (960L, 50003L)
-    final_scores_t = final_dist_gen(scores_t.view(decoder_batch_len, batch_size, dicts['tgt'].size()), attn_t, p_gen_t)
+    final_scores_t = final_dist_gen(scores_t, attn_t, p_gen_t, sources, decoder_batch_len)
     loss_t = crit(scores_t, targ_t.view(-1))
     pred_t = scores_t.max(1)[1]
     num_correct_t = pred_t.data.eq(targ_t.data).masked_select(targ_t.ne(onmt.Constants.PAD).data).sum()

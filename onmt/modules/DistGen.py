@@ -7,11 +7,12 @@ class DistGen(nn.Module):
     def __init__(self):
         super(DistGen, self).__init__()
     
-    def forward(self, vocab_ds, attns, p_gens):
+    def forward(self, vocab_ds, attns, p_gens, sources, decoder_batch_len):
         """
-        vocab_ds: (decoder_batch_len, batch_size, decoder_voc_size)
-        attns: (decoder_batch_len, batch_size, encoder_len)
-        p_gens: (decoder_batch_len, batch_size, 1)
+        vocab_ds: (decoder_batch_len*batch_size, decoder_voc_size)
+        attns: (decoder_batch_len*batch_size, encoder_len)
+        p_gens: (decoder_batch_len*batch_size, 1)
+        sources: (encoder_len, batch_size)
         return: 
         """
         # Multiply vocab dists by p_gen and attention dists by (1-p_gen)
@@ -20,6 +21,9 @@ class DistGen(nn.Module):
         
         # Concatenate some zeros to each vocabulary dist, to hold the probabilities for in-article OOV words
         
-        
-        final_dists = attn_dists
+        # Project attn distribution to vocab distribution
+        sources_rep = torch.t(sources).repeat(decoder_batch_len, 1) #(decoder_batch_len*batch_size, encoder_len)
+        attn_dists_projected = torch.zeros(vocab_ds.size()).scatter_(1, sources_rep.data.cpu(), attn_dists.data.cpu())
+        attn_dists_projected = torch.autograd.Variable(attn_dists_projected).cuda()
+        final_dists = attn_dists_projected + vocab_dists
         return final_dists
